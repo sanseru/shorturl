@@ -166,11 +166,12 @@ app.use(session({
   resave: false,
   saveUninitialized: false,
   name: 'sessionId', // Change default session name
+  proxy: process.env.NODE_ENV === 'production', // Trust proxy untuk HTTPS detection
   cookie: { 
-    secure: process.env.NODE_ENV === 'production', // Auto-detect HTTPS in production
+    secure: process.env.NODE_ENV === 'production' ? 'auto' : false, // Auto detect HTTPS dengan proxy
     httpOnly: true,
     maxAge: 2 * 60 * 60 * 1000, // Reduced to 2 hours for admin sessions
-    sameSite: 'strict' // CSRF protection
+    sameSite: process.env.NODE_ENV === 'production' ? 'lax' : 'strict' // Lebih flexible untuk production
   }
 }));
 
@@ -217,22 +218,33 @@ const csrfProtection = csurf({ cookie: true });
 
 // Authentication middleware with session timeout
 function requireAuth(req, res, next) {
+  console.log('RequireAuth check:', {
+    sessionExists: !!req.session,
+    authenticated: req.session?.authenticated,
+    user: req.session?.user,
+    sessionId: req.session?.id,
+    cookies: req.headers.cookie ? 'present' : 'missing'
+  });
+  
   if (req.session && req.session.authenticated) {
     // Check session timeout (2 hours)
     const sessionAge = Date.now() - (req.session.loginTime || 0);
     const maxAge = 2 * 60 * 60 * 1000; // 2 hours
     
     if (sessionAge > maxAge) {
+      console.log('Session expired for user:', req.session?.user);
       req.session.destroy((err) => {
-        console.log('Session expired for user:', req.session?.user);
+        if (err) console.error('Session destroy error:', err);
       });
       return res.redirect('/admin/login?redirect=' + encodeURIComponent(req.originalUrl) + '&message=session_expired');
     }
     
     // Refresh session on activity
     req.session.loginTime = Date.now();
+    console.log('Authentication successful, proceeding...');
     return next();
   } else {
+    console.log('Authentication failed, redirecting to login...');
     return res.redirect('/admin/login?redirect=' + encodeURIComponent(req.originalUrl));
   }
 }
@@ -303,9 +315,29 @@ app.post('/admin/login', csrfProtection, loginLimiter, async (req, res) => {
       req.session.loginTime = Date.now();
       
       console.log('Login successful for user:', username);
+      console.log('Session after login:', {
+        authenticated: req.session.authenticated,
+        user: req.session.user,
+        loginTime: req.session.loginTime,
+        sessionId: req.session.id
+      });
       
       const redirectUrl = redirect || '/admin';
-      res.redirect(redirectUrl);
+      console.log('Redirecting to:', redirectUrl);
+      
+      // Force save session before redirect
+      req.session.save((err) => {
+        if (err) {
+          console.error('Session save error:', err);
+          return res.render('login', { 
+            csrfToken: req.csrfToken(), 
+            error: 'Login failed. Please try again.',
+            redirect: redirect || '/admin'
+          });
+        }
+        console.log('Session saved successfully, redirecting...');
+        res.redirect(redirectUrl);
+      });
     } else {
       console.log('Login failed for user:', username);
       res.render('login', { 
@@ -492,6 +524,32 @@ app.get('/health', (req, res) => {
       error: err.message,
       timestamp: new Date().toISOString()
     });
+  }
+});
+
+// Debug endpoint untuk session (temporary - remove in production)
+app.get('/debug/session', (req, res) => {
+  if (process.env.NODE_ENV !== 'production') {
+    res.json({
+      session: {
+        id: req.session?.id,
+        authenticated: req.session?.authenticated,
+        user: req.session?.user,
+        loginTime: req.session?.loginTime
+      },
+      cookies: req.headers.cookie,
+      headers: {
+        'x-forwarded-proto': req.get('x-forwarded-proto'),
+        'x-forwarded-for': req.get('x-forwarded-for'),
+        'x-real-ip': req.get('x-real-ip'),
+        'host': req.get('host')
+      },
+      ip: req.ip,
+      secure: req.secure,
+      protocol: req.protocol
+    });
+  } else {
+    res.status(404).send('Not found');
   }
 });
 
