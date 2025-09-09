@@ -26,7 +26,26 @@ function securityLog(event, details = {}) {
   // or send to a monitoring service
 }
 
+// Helper function to get real client IP
+function getRealIP(req) {
+  // Dengan trust proxy enabled, req.ip akan menggunakan X-Forwarded-For header
+  // yang dikirim oleh Nginx dengan real client IP
+  return req.ip || 'unknown';
+}
+
 const app = express();
+
+// Trust proxy configuration untuk production dengan Nginx
+if (process.env.NODE_ENV === 'production') {
+  // Trust semua proxy untuk production (Nginx, load balancers, etc)
+  app.set('trust proxy', true);
+  console.log('Trust proxy enabled for production environment');
+} else {
+  // Untuk development, hanya trust localhost
+  app.set('trust proxy', 'loopback');
+  console.log('Trust proxy set to loopback for development');
+}
+
 // Use sql.js for a portable WASM-backed sqlite; persist by writing the DB file.
 const DB_PATH = path.join(__dirname, 'data', 'shorturl.db');
 if (!fs.existsSync(path.join(__dirname, 'data'))) fs.mkdirSync(path.join(__dirname, 'data'));
@@ -159,19 +178,36 @@ app.use(session({
 const generalLimiter = rateLimit({ 
   windowMs: 60 * 1000, 
   max: 30,
-  message: 'Too many requests, please try again later.'
+  message: 'Too many requests, please try again later.',
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  // Skip successful requests to reduce false positives
+  skipSuccessfulRequests: false
 });
 
 const shortenLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 5, // Only 5 URL shortening per minute
-  message: 'Too many URL shortening requests, please try again later.'
+  message: 'Too many URL shortening requests, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Custom key generator untuk lebih akurat dengan proxy
+  keyGenerator: function (req) {
+    return req.ip; // Menggunakan real IP dari trust proxy
+  }
 });
 
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // Only 5 login attempts per 15 minutes
-  message: 'Too many login attempts, please try again later.'
+  message: 'Too many login attempts, please try again later.',
+  standardHeaders: true,
+  legacyHeaders: false,
+  // Track failed login attempts more strictly
+  skipSuccessfulRequests: true,
+  keyGenerator: function (req) {
+    return req.ip; // Menggunakan real IP dari trust proxy
+  }
 });
 
 app.use(generalLimiter);
@@ -366,7 +402,7 @@ app.post('/shorten', csrfProtection, shortenLimiter, (req, res) => {
       securityLog('BLOCKED_URL', {
         url: trimmedUrl,
         hostname: host,
-        ip: clientIP,
+        ip: getRealIP(req),
         userAgent: userAgent
       });
       
@@ -403,9 +439,8 @@ app.post('/shorten', csrfProtection, shortenLimiter, (req, res) => {
     const expireAt = parseExpiry(expiryRule);
     const createdAt = Date.now();
     
-    // Get client information
-    const clientIP = req.ip || req.connection.remoteAddress || req.socket.remoteAddress || 
-                    (req.connection.socket ? req.connection.socket.remoteAddress : null) || 'unknown';
+    // Get client information (menggunakan helper function untuk real IP)
+    const clientIP = getRealIP(req);
     const userAgent = req.get('User-Agent') || 'unknown';
     
     // Use prepared statements for safe insertion
@@ -820,16 +855,15 @@ app.get('/:code', async (req, res) => {
       return res.status(410).render('expired');
     }
 
-    // Increment visit counter and update visit info
-    const visitIP = req.ip || req.connection.remoteAddress || req.socket.remoteAddress || 
-                   (req.connection.socket ? req.connection.socket.remoteAddress : null) || 'unknown';
+    // Increment visit counter and update visit info (menggunakan helper function untuk real IP)
+    const visitIP = getRealIP(req);
     const visitUserAgent = req.get('User-Agent') || 'unknown';
     const visitTime = Date.now();
     
-    const escapedVisitIP = visitIP.replace(/'/g, "''");
-    const escapedVisitUA = visitUserAgent.replace(/'/g, "''");
-    const updateQuery = `UPDATE links SET visits = visits + 1, last_visit_at = ${visitTime}, last_visit_ip = '${escapedVisitIP}', last_visit_user_agent = '${escapedVisitUA}' WHERE code = '${escapedCode}'`;
-    db.exec(updateQuery);
+    // Update visit information using prepared statement
+    const updateStmt = db.prepare('UPDATE links SET visits = visits + 1, last_visit_at = ?, last_visit_ip = ?, last_visit_user_agent = ? WHERE code = ?');
+    updateStmt.run([visitTime, visitIP, visitUserAgent, code]);
+    updateStmt.free();
     persist();
     
     console.log('Redirecting:', code, '->', new URL(row.url).hostname);
