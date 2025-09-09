@@ -1,0 +1,609 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+    <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
+    <meta name="bingbot" content="noindex, nofollow, noarchive, nosnippet">
+    <title>ShortURL - Statistics Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+  </head>
+  <body class="bg-light">
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="/">
+          <i class="bi bi-link-45deg me-2"></i>ShortURL
+        </a>
+
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+
+        <div class="collapse navbar-collapse" id="navbarNav">
+          <div class="navbar-nav ms-auto">
+            <a class="nav-link" href="/">
+              <i class="bi bi-house me-2"></i>Home
+            </a>
+            <a class="nav-link" href="/admin">
+              <i class="bi bi-collection me-2"></i>Links
+            </a>
+            <a class="nav-link active" href="/debug/stats">
+              <i class="bi bi-bar-chart me-2"></i>Statistics
+            </a>
+            <a class="nav-link" href="/privacy">
+              <i class="bi bi-shield-check me-2"></i>Privacy
+            </a>
+            <a class="nav-link" href="/terms">
+              <i class="bi bi-file-text me-2"></i>Terms
+            </a>
+            <div class="nav-item dropdown">
+              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                <i class="bi bi-person-circle me-2"></i>Admin
+              </a>
+              <ul class="dropdown-menu">
+                <li>
+                  <form method="POST" action="/admin/logout" class="m-0">
+                    <button type="submit" class="dropdown-item">
+                      <i class="bi bi-box-arrow-right me-2"></i>Logout
+                    </button>
+                  </form>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container-fluid py-4">
+      <!-- Header -->
+      <div class="row mb-4">
+        <div class="col-12">
+          <div class="card bg-primary text-white">
+            <div class="card-body">
+              <div class="row align-items-center">
+                <div class="col-md-8">
+                  <h2 class="card-title mb-1">
+                    <i class="bi bi-bar-chart me-2"></i>Statistics Dashboard
+                  </h2>
+                  <p class="card-text mb-0 opacity-75">Monitor your URL shortener performance and analytics</p>
+                  <div class="mt-2">
+                    <small class="text-white-50">
+                      <i class="bi bi-shield-check me-1"></i>Advanced tracking enabled
+                    </small>
+                  </div>
+                </div>
+                <div class="col-md-4 text-md-end mt-3 mt-md-0">
+                  <div class="bg-white bg-opacity-25 rounded-pill px-4 py-2 d-inline-flex align-items-center">
+                    <i class="bi bi-clock me-2"></i>
+                    <div>
+                      <div class="fw-bold fs-4 mb-0" id="currentTime">--:--:--</div>
+                      <small class="opacity-75">Last updated</small>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <% if (error) { %>
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>
+          <%= error %>
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      <% } else if (stats) { %>
+
+        <!-- Statistics Cards -->
+        <div class="row mb-4">
+          <div class="col-md-3 mb-3">
+            <div class="card h-100">
+              <div class="card-body text-center">
+                <div class="mb-3">
+                  <i class="bi bi-link-45deg text-primary" style="font-size: 2.5rem;"></i>
+                </div>
+                <h3 class="card-title mb-1"><%= stats.totalLinks %></h3>
+                <p class="card-text text-muted mb-0">Total Links</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-md-3 mb-3">
+            <div class="card h-100">
+              <div class="card-body text-center">
+                <div class="mb-3">
+                  <i class="bi bi-clock-history text-success" style="font-size: 2.5rem;"></i>
+                </div>
+                <h3 class="card-title mb-1"><%= stats.linksLast24h %></h3>
+                <p class="card-text text-muted mb-0">Created Today</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-md-3 mb-3">
+            <div class="card h-100">
+              <div class="card-body text-center">
+                <div class="mb-3">
+                  <i class="bi bi-eye text-info" style="font-size: 2.5rem;"></i>
+                </div>
+                <h3 class="card-title mb-1"><%= stats.totalVisits %></h3>
+                <p class="card-text text-muted mb-0">Total Visits</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="col-md-3 mb-3">
+            <div class="card h-100">
+              <div class="card-body text-center">
+                <div class="mb-3">
+                  <i class="bi bi-globe text-warning" style="font-size: 2.5rem;"></i>
+                </div>
+                <h3 class="card-title mb-1"><%= stats.uniqueIPs %></h3>
+                <p class="card-text text-muted mb-0">Unique IPs</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Visitor Analytics -->
+        <div class="row mb-4">
+          <!-- Browser Statistics -->
+          <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+              <div class="card-header">
+                <div class="d-flex align-items-center">
+                  <i class="bi bi-browser-chrome text-primary me-2" style="font-size: 1.25rem;"></i>
+                  <h5 class="mb-0">Browser Statistics</h5>
+                </div>
+                <small class="text-muted">Visitor browser preferences</small>
+              </div>
+              <div class="card-body">
+                <% if (stats.browserStats && stats.browserStats.length > 0) { %>
+                  <div class="list-group list-group-flush">
+                    <% stats.browserStats.forEach((browser, index) => { %>
+                      <div class="list-group-item px-0 py-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                          <div class="d-flex align-items-center">
+                            <div class="me-3">
+                              <% if (browser.browser === 'Chrome') { %>
+                                <i class="bi bi-browser-chrome text-success" style="font-size: 1.5rem;"></i>
+                              <% } else if (browser.browser === 'Firefox') { %>
+                                <i class="bi bi-browser-firefox text-orange" style="font-size: 1.5rem;"></i>
+                              <% } else if (browser.browser === 'Safari') { %>
+                                <i class="bi bi-browser-safari text-info" style="font-size: 1.5rem;"></i>
+                              <% } else if (browser.browser === 'Edge') { %>
+                                <i class="bi bi-browser-edge text-primary" style="font-size: 1.5rem;"></i>
+                              <% } else { %>
+                                <i class="bi bi-browser text-secondary" style="font-size: 1.5rem;"></i>
+                              <% } %>
+                            </div>
+                            <div>
+                              <div class="fw-bold"><%= browser.browser %></div>
+                              <small class="text-muted"><%= Math.round((browser.count / stats.totalLinks) * 100) %>% of total</small>
+                            </div>
+                          </div>
+                          <div class="text-end">
+                            <span class="badge bg-primary fs-6"><%= browser.count %></span>
+                          </div>
+                        </div>
+                      </div>
+                    <% }) %>
+                  </div>
+                <% } else { %>
+                  <div class="text-center py-4">
+                    <i class="bi bi-browser text-muted" style="font-size: 3rem;"></i>
+                    <p class="text-muted mt-2 mb-0">No browser data available</p>
+                  </div>
+                <% } %>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top Countries -->
+          <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+              <div class="card-header">
+                <div class="d-flex align-items-center">
+                  <i class="bi bi-geo-alt text-info me-2" style="font-size: 1.25rem;"></i>
+                  <h5 class="mb-0">Top Countries</h5>
+                </div>
+                <small class="text-muted">Geographic distribution of visitors</small>
+              </div>
+              <div class="card-body">
+                <% if (stats.topCountries && stats.topCountries.length > 0) { %>
+                  <div class="list-group list-group-flush">
+                    <% stats.topCountries.forEach((country, index) => { %>
+                      <div class="list-group-item px-0 py-3">
+                        <div class="d-flex justify-content-between align-items-center">
+                          <div class="d-flex align-items-center">
+                            <div class="me-3">
+                              <i class="bi bi-flag text-warning" style="font-size: 1.5rem;"></i>
+                            </div>
+                            <div>
+                              <div class="fw-bold"><%= country.country %></div>
+                              <small class="text-muted">#<%= index + 1 %> most active</small>
+                            </div>
+                          </div>
+                          <div class="text-end">
+                            <span class="badge bg-success fs-6"><%= country.count %></span>
+                          </div>
+                        </div>
+                      </div>
+                    <% }) %>
+                  </div>
+                <% } else { %>
+                  <div class="text-center py-4">
+                    <i class="bi bi-geo-alt text-muted" style="font-size: 3rem;"></i>
+                    <p class="text-muted mt-2 mb-0">No country data available</p>
+                  </div>
+                <% } %>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Detailed Statistics -->
+        <div class="row">
+          <!-- Top Links -->
+          <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+              <div class="card-header">
+                <div class="d-flex align-items-center">
+                  <i class="bi bi-trophy text-warning me-2" style="font-size: 1.25rem;"></i>
+                  <h5 class="mb-0">Most Visited Links</h5>
+                </div>
+                <small class="text-muted">Your top performing shortened links</small>
+              </div>
+              <div class="card-body">
+                <% if (stats.topLinks && stats.topLinks.length > 0) { %>
+                  <div class="list-group list-group-flush">
+                    <% stats.topLinks.forEach((link, index) => { %>
+                      <div class="list-group-item px-0 py-3">
+                        <div class="d-flex justify-content-between align-items-start">
+                          <div class="flex-grow-1 me-3">
+                            <div class="d-flex align-items-center mb-1">
+                              <span class="badge bg-primary me-2">#<%= index + 1 %></span>
+                              <code class="bg-light px-2 py-1 rounded text-primary fw-bold"><%= link.code %></code>
+                            </div>
+                            <div class="text-muted small text-truncate" title="<%= link.url %>" style="max-width: 300px;">
+                              <%= link.url %>
+                            </div>
+                          </div>
+                          <div class="text-end">
+                            <span class="badge bg-success fs-6">
+                              <i class="bi bi-eye me-1"></i><%= link.visits %>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    <% }) %>
+                  </div>
+                <% } else { %>
+                  <div class="text-center py-5">
+                    <div class="mb-4">
+                      <i class="bi bi-inbox text-muted" style="font-size: 4rem;"></i>
+                    </div>
+                    <h5 class="text-muted mb-2">No Visits Yet</h5>
+                    <p class="text-muted mb-0">Links will appear here once they receive visits</p>
+                  </div>
+                <% } %>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Links -->
+          <div class="col-lg-6 mb-4">
+            <div class="card h-100">
+              <div class="card-header">
+                <div class="d-flex align-items-center">
+                  <i class="bi bi-clock text-info me-2" style="font-size: 1.25rem;"></i>
+                  <h5 class="mb-0">Recent Links</h5>
+                </div>
+                <small class="text-muted">Your most recently created links</small>
+              </div>
+              <div class="card-body">
+                <% if (stats.recentLinks && stats.recentLinks.length > 0) { %>
+                  <div class="list-group list-group-flush">
+                    <% stats.recentLinks.forEach((link, index) => { %>
+                      <div class="list-group-item px-0 py-3">
+                        <div class="d-flex justify-content-between align-items-start">
+                          <div class="flex-grow-1 me-3">
+                            <div class="d-flex align-items-center mb-1">
+                              <code class="bg-light px-2 py-1 rounded text-primary fw-bold"><%= link.code %></code>
+                            </div>
+                            <div class="text-muted small text-truncate" title="<%= link.url %>" style="max-width: 300px;">
+                              <%= link.url %>
+                            </div>
+                            <div class="text-muted small mt-1">
+                              <i class="bi bi-calendar3 me-1"></i><%= link.created_at %>
+                            </div>
+                          </div>
+                          <div class="text-end">
+                            <span class="badge bg-secondary">
+                              <i class="bi bi-eye me-1"></i><%= link.visits || 0 %>
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    <% }) %>
+                  </div>
+                <% } else { %>
+                  <div class="text-center py-5">
+                    <div class="mb-4">
+                      <i class="bi bi-plus-circle text-muted" style="font-size: 4rem;"></i>
+                    </div>
+                    <h5 class="text-muted mb-2">No Links Created</h5>
+                    <p class="text-muted mb-0">Create your first link to see it here</p>
+                    <a href="/" class="btn btn-primary mt-3">
+                      <i class="bi bi-plus-lg me-2"></i>Create Link
+                    </a>
+                  </div>
+                <% } %>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent Visitor Activity -->
+        <div class="row mb-4">
+          <div class="col-12">
+            <div class="card">
+              <div class="card-header">
+                <div class="d-flex align-items-center">
+                  <i class="bi bi-activity text-danger me-2" style="font-size: 1.25rem;"></i>
+                  <h5 class="mb-0">Recent Visitor Activity</h5>
+                </div>
+                <small class="text-muted">Detailed information about recent link visits</small>
+              </div>
+              <div class="card-body p-0">
+                <% if (stats.recentVisitors && stats.recentVisitors.length > 0) { %>
+                  <div class="table-responsive">
+                    <table class="table table-hover mb-0">
+                      <thead class="table-light">
+                        <tr>
+                          <th>Short Code</th>
+                          <th>Destination</th>
+                          <th>Visitor IP</th>
+                          <th>Browser/Device</th>
+                          <th>Location</th>
+                          <th>Last Visit</th>
+                          <th class="text-center">Visits</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <% stats.recentVisitors.forEach((visitor, index) => { %>
+                          <tr>
+                            <td>
+                              <code class="bg-light px-2 py-1 rounded text-primary fw-bold"><%= visitor.code %></code>
+                            </td>
+                            <td>
+                              <div class="text-truncate" title="<%= visitor.url %>" style="max-width: 250px;">
+                                <%= visitor.url %>
+                              </div>
+                              <small class="text-muted">
+                                Created: <%= visitor.created_at %>
+                              </small>
+                            </td>
+                            <td>
+                              <div class="d-flex align-items-center">
+                                <i class="bi bi-router text-muted me-2"></i>
+                                <code class="small me-2"><%= visitor.last_visit_ip %></code>
+                                <button class="btn btn-sm btn-outline-secondary ip-copy" data-ip="<%= visitor.last_visit_ip %>" title="Copy IP">
+                                  <i class="bi bi-clipboard"></i>
+                                </button>
+                              </div>
+                              <% if (visitor.creator_ip !== visitor.last_visit_ip) { %>
+                                <small class="text-muted">
+                                  Creator: <%= visitor.creator_ip %>
+                                </small>
+                              <% } %>
+                            </td>
+                            <td>
+                              <div class="small">
+                                <% 
+                                  const ua = visitor.last_visit_user_agent;
+                                  let browser = 'Unknown';
+                                  let device = 'Desktop';
+                                  
+                                  if (ua.includes('Chrome')) browser = 'Chrome';
+                                  else if (ua.includes('Firefox')) browser = 'Firefox';
+                                  else if (ua.includes('Safari')) browser = 'Safari';
+                                  else if (ua.includes('Edge')) browser = 'Edge';
+                                  
+                                  if (ua.includes('Mobile')) device = 'Mobile';
+                                  else if (ua.includes('Tablet')) device = 'Tablet';
+                                %>
+                                <i class="bi bi-browser-<%= browser.toLowerCase() %> me-1"></i>
+                                <%= browser %> (<%= device %>)
+                              </div>
+                              <div class="user-agent-short">
+                                <small class="text-muted text-truncate d-block" title="<%= ua %>" style="max-width: 200px;">
+                                  <%= ua.length > 30 ? ua.substring(0, 30) + '...' : ua %>
+                                </small>
+                                <% if (ua.length > 30) { %>
+                                  <button class="btn btn-sm btn-link p-0 text-decoration-none ua-toggle" style="font-size: 0.75rem;">
+                                    <i class="bi bi-chevron-down"></i> Show more
+                                  </button>
+                                <% } %>
+                              </div>
+                              <div class="user-agent-full" style="display: none;">
+                                <small class="text-muted d-block mb-1" style="word-break: break-all;">
+                                  <%= ua %>
+                                </small>
+                                <button class="btn btn-sm btn-link p-0 text-decoration-none ua-toggle" style="font-size: 0.75rem;">
+                                  <i class="bi bi-chevron-up"></i> Show less
+                                </button>
+                              </div>
+                            </td>
+                            <td>
+                              <div class="d-flex align-items-center">
+                                <i class="bi bi-geo-alt text-info me-2"></i>
+                                <span class="small"><%= visitor.creator_country %></span>
+                              </div>
+                            </td>
+                            <td>
+                              <small class="text-muted">
+                                <i class="bi bi-clock me-1"></i>
+                                <%= visitor.last_visit_at %>
+                              </small>
+                            </td>
+                            <td class="text-center">
+                              <span class="badge bg-primary"><%= visitor.visits %></span>
+                            </td>
+                          </tr>
+                        <% }) %>
+                      </tbody>
+                    </table>
+                  </div>
+                <% } else { %>
+                  <div class="text-center py-5">
+                    <div class="mb-4">
+                      <i class="bi bi-activity text-muted" style="font-size: 4rem;"></i>
+                    </div>
+                    <h5 class="text-muted mb-2">No Recent Activity</h5>
+                    <p class="text-muted mb-0">Visitor activity will appear here once links are accessed</p>
+                  </div>
+                <% } %>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Additional Stats -->
+        <div class="row">
+          <div class="col-12">
+            <div class="card">
+              <div class="card-header">
+                <h5 class="mb-0">
+                  <i class="bi bi-info-circle text-secondary me-2"></i>System Information
+                </h5>
+              </div>
+              <div class="card-body">
+                <div class="row text-center">
+                  <div class="col-md-3 mb-3">
+                    <div class="border rounded p-3">
+                      <i class="bi bi-shield-check text-success mb-2" style="font-size: 1.5rem;"></i>
+                      <h6 class="mb-1">Security</h6>
+                      <small class="text-muted">All systems secure</small>
+                    </div>
+                  </div>
+                  <div class="col-md-3 mb-3">
+                    <div class="border rounded p-3">
+                      <i class="bi bi-speedometer2 text-primary mb-2" style="font-size: 1.5rem;"></i>
+                      <h6 class="mb-1">Performance</h6>
+                      <small class="text-muted">Fast response times</small>
+                    </div>
+                  </div>
+                  <div class="col-md-3 mb-3">
+                    <div class="border rounded p-3">
+                      <i class="bi bi-database text-info mb-2" style="font-size: 1.5rem;"></i>
+                      <h6 class="mb-1">Database</h6>
+                      <small class="text-muted">SQLite with tracking</small>
+                    </div>
+                  </div>
+                  <div class="col-md-3 mb-3">
+                    <div class="border rounded p-3">
+                      <i class="bi bi-clock text-warning mb-2" style="font-size: 1.5rem;"></i>
+                      <h6 class="mb-1">Tracking</h6>
+                      <small class="text-muted">IP & User-Agent data</small>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      <% } else { %>
+        <div class="alert alert-warning alert-dismissible fade show" role="alert">
+          <i class="bi bi-exclamation-triangle-fill me-2"></i>
+          Unable to load statistics. Please try again later.
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      <% } %>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+      // Update current time
+      function updateTime() {
+        const now = new Date();
+        const timeString = now.toLocaleTimeString('en-US', {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        });
+        const timeElement = document.getElementById('currentTime');
+        if (timeElement) {
+          timeElement.textContent = timeString;
+        }
+      }
+
+      // Toggle user agent details
+      function toggleUserAgent(btn) {
+        const row = btn.closest('tr');
+        const uaCell = row.querySelector('.user-agent-full');
+        const shortUa = row.querySelector('.user-agent-short');
+
+        if (uaCell.style.display === 'none') {
+          uaCell.style.display = 'block';
+          shortUa.style.display = 'none';
+          btn.innerHTML = '<i class="bi bi-chevron-up"></i>';
+        } else {
+          uaCell.style.display = 'none';
+          shortUa.style.display = 'block';
+          btn.innerHTML = '<i class="bi bi-chevron-down"></i>';
+        }
+      }
+
+      // Copy IP address to clipboard
+      function copyIP(ip, btn) {
+        navigator.clipboard.writeText(ip).then(() => {
+          const originalHTML = btn.innerHTML;
+          btn.innerHTML = '<i class="bi bi-check"></i>';
+          btn.classList.add('btn-success');
+          btn.classList.remove('btn-outline-secondary');
+
+          setTimeout(() => {
+            btn.innerHTML = originalHTML;
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-outline-secondary');
+          }, 2000);
+        });
+      }
+
+      // Initialize
+      document.addEventListener('DOMContentLoaded', () => {
+        updateTime();
+        setInterval(updateTime, 1000);
+
+        // Add click handlers for user agent toggles
+        document.querySelectorAll('.ua-toggle').forEach(btn => {
+          btn.addEventListener('click', () => toggleUserAgent(btn));
+        });
+
+        // Add click handlers for IP copy buttons
+        document.querySelectorAll('.ip-copy').forEach(btn => {
+          btn.addEventListener('click', function() {
+            const ip = this.getAttribute('data-ip');
+            copyIP(ip, this);
+          });
+        });
+
+        // Auto refresh every 30 seconds
+        setTimeout(() => {
+          window.location.reload();
+        }, 30000);
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,693 @@
+require('dotenv').config();
+const path = require('path');
+const express = require('express');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
+const cookieParser = require('cookie-parser');
+const csurf = require('csurf');
+const session = require('express-session');
+const bcrypt = require('bcryptjs');
+const initSqlJs = require('sql.js');
+const fs = require('fs');
+const crypto = require('crypto');
+const cron = require('node-cron');
+
+const app = express();
+// Use sql.js for a portable WASM-backed sqlite; persist by writing the DB file.
+const DB_PATH = path.join(__dirname, 'data', 'shorturl.db');
+if (!fs.existsSync(path.join(__dirname, 'data'))) fs.mkdirSync(path.join(__dirname, 'data'));
+let SQL;
+let db;
+async function initDb() {
+  console.log('=== INITIALIZING DATABASE ===');
+  console.log('DB Path:', DB_PATH);
+  
+  SQL = await initSqlJs();
+  console.log('SQL.js initialized successfully');
+  
+  if (fs.existsSync(DB_PATH)) {
+    console.log('Existing database file found, loading...');
+    const filebuffer = fs.readFileSync(DB_PATH);
+    db = new SQL.Database(filebuffer);
+    console.log('Database loaded from file');
+  } else {
+    console.log('Creating new database...');
+    db = new SQL.Database();
+    console.log('New database created');
+  }
+  
+  // Ensure schema with proper indexes for performance
+  console.log('Creating/verifying table schema...');
+  db.run(`
+    CREATE TABLE IF NOT EXISTS links (
+      id INTEGER PRIMARY KEY,
+      code TEXT UNIQUE NOT NULL,
+      url TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      expire_at INTEGER,
+      visits INTEGER DEFAULT 0,
+      creator_ip TEXT,
+      creator_user_agent TEXT,
+      creator_country TEXT,
+      last_visit_at INTEGER,
+      last_visit_ip TEXT,
+      last_visit_user_agent TEXT
+    );
+  `);
+  
+  // Create indexes for better performance
+  console.log('Creating indexes...');
+  try {
+    db.run('CREATE INDEX IF NOT EXISTS idx_code ON links(code);');
+    db.run('CREATE INDEX IF NOT EXISTS idx_expire_at ON links(expire_at);');
+    db.run('CREATE INDEX IF NOT EXISTS idx_created_at ON links(created_at);');
+    db.run('CREATE INDEX IF NOT EXISTS idx_creator_ip ON links(creator_ip);');
+    db.run('CREATE INDEX IF NOT EXISTS idx_last_visit_at ON links(last_visit_at);');
+    console.log('Indexes created successfully');
+  } catch (indexErr) {
+    console.warn('Index creation warning:', indexErr.message);
+  }
+  
+  // Check current data
+  try {
+    const countResult = db.exec('SELECT COUNT(*) as count FROM links');
+    if (countResult && countResult.length > 0) {
+      const count = countResult[0].values[0][0];
+      console.log('Current links in database:', count);
+    }
+  } catch (countErr) {
+    console.warn('Could not count existing links:', countErr.message);
+  }
+  
+  persist();
+  console.log('Database initialization complete');
+}
+
+function persist() {
+  const data = db.export();
+  const buffer = Buffer.from(data);
+  fs.writeFileSync(DB_PATH, buffer);
+}
+
+// Basic security headers with CSP configuration
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      styleSrc: [
+        "'self'", 
+        "'unsafe-inline'", 
+        "https://cdn.jsdelivr.net",
+        "https://fonts.googleapis.com"
+      ],
+      scriptSrc: [
+        "'self'", 
+        "'unsafe-inline'", 
+        "https://cdn.jsdelivr.net"
+      ],
+      scriptSrcAttr: ["'unsafe-inline'"],
+      fontSrc: [
+        "'self'", 
+        "https://cdn.jsdelivr.net",
+        "https://fonts.gstatic.com"
+      ],
+      imgSrc: ["'self'", "data:", "https:"],
+      connectSrc: ["'self'"]
+    }
+  }
+}));
+
+// Views and static
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+app.use(express.static(path.join(__dirname, 'public')));
+
+app.use('/css/bootstrap.min.css', express.static(path.join(__dirname, 'node_modules/bootstrap/dist/css/bootstrap.min.css')));
+app.use(express.urlencoded({ extended: false }));
+app.use(express.json());
+app.use(cookieParser());
+
+// Session configuration
+app.use(session({
+  secret: process.env.SESSION_SECRET || 'your-fallback-secret-key',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { 
+    secure: false, // Set to true if using HTTPS
+    httpOnly: true,
+    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+  }
+}));
+
+// Rate limit
+const limiter = rateLimit({ windowMs: 60 * 1000, max: 60 });
+app.use(limiter);
+
+// CSRF protection for forms
+const csrfProtection = csurf({ cookie: true });
+
+// Authentication middleware
+function requireAuth(req, res, next) {
+  if (req.session && req.session.authenticated) {
+    return next();
+  } else {
+    return res.redirect('/admin/login?redirect=' + encodeURIComponent(req.originalUrl));
+  }
+}
+
+// NOTE: DB schema is created inside initDb() after sql.js is initialized.
+
+function genCode(n = 6) {
+  return crypto.randomBytes(n).toString('base64url').slice(0, n);
+}
+
+// Helper to parse duration rule like "hours:5" or "days:2"
+function parseExpiry(rule) {
+  if (!rule) return null;
+  // allow formats: hours:5, days:2, months:1
+  const [unit, val] = rule.split(':');
+  const num = Math.max(0, parseInt(val || '0', 10));
+  if (!num) return null;
+  const now = Date.now();
+  switch (unit) {
+    case 'hours': return now + num * 3600 * 1000;
+    case 'days': return now + num * 24 * 3600 * 1000;
+    case 'months': return now + num * 30 * 24 * 3600 * 1000;
+    case 'minutes': return now + num * 60 * 1000;
+    default: return null;
+  }
+}
+
+// Authentication routes
+app.get('/admin/login', csrfProtection, (req, res) => {
+  if (req.session && req.session.authenticated) {
+    const redirect = req.query.redirect || '/admin';
+    return res.redirect(redirect);
+  }
+  res.render('login', { 
+    csrfToken: req.csrfToken(), 
+    error: null,
+    redirect: req.query.redirect || '/admin'
+  });
+});
+
+app.post('/admin/login', csrfProtection, async (req, res) => {
+  const { username, password, redirect } = req.body;
+  
+  console.log('=== LOGIN ATTEMPT ===');
+  console.log('Username:', username);
+  console.log('Redirect URL:', redirect);
+  
+  try {
+    // Get credentials from environment
+    const adminUsername = process.env.ADMIN_USERNAME || 'admin';
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+    
+    // Simple credential check (in production, use proper password hashing)
+    if (username === adminUsername && password === adminPassword) {
+      req.session.authenticated = true;
+      req.session.user = username;
+      
+      console.log('Login successful for user:', username);
+      
+      const redirectUrl = redirect || '/admin';
+      res.redirect(redirectUrl);
+    } else {
+      console.log('Login failed for user:', username);
+      res.render('login', { 
+        csrfToken: req.csrfToken(), 
+        error: 'Invalid username or password',
+        redirect: redirect || '/admin'
+      });
+    }
+  } catch (error) {
+    console.error('Login error:', error);
+    res.render('login', { 
+      csrfToken: req.csrfToken(), 
+      error: 'Login failed. Please try again.',
+      redirect: redirect || '/admin'
+    });
+  }
+});
+
+app.post('/admin/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) {
+      console.error('Logout error:', err);
+    }
+    res.redirect('/admin/login');
+  });
+});
+
+app.get('/', csrfProtection, (req, res) => {
+  res.render('index', { csrfToken: req.csrfToken(), error: null, short: null });
+});
+
+// Terms of Service page
+app.get('/terms', (req, res) => {
+  res.render('terms');
+});
+
+// Privacy Policy page
+app.get('/privacy', (req, res) => {
+  res.render('privacy');
+});
+
+app.post('/shorten', csrfProtection, (req, res) => {
+  const { url, expiryRule } = req.body;
+  
+  console.log('Creating short URL for:', url?.substring(0, 100) + (url?.length > 100 ? '...' : ''));
+  
+  if (!url || !url.trim()) {
+    return res.status(400).render('index', { 
+      csrfToken: req.csrfToken(), 
+      error: 'URL is required', 
+      short: null 
+    });
+  }
+
+  let trimmedUrl = url.trim();
+
+  // Check URL length (most browsers support up to ~2000 chars, but we'll be more generous)
+  if (trimmedUrl.length > 5000) {
+    console.log('ERROR: URL too long:', trimmedUrl.length, 'characters');
+    return res.status(400).render('index', { 
+      csrfToken: req.csrfToken(), 
+      error: 'URL is too long. Maximum length is 5000 characters.', 
+      short: null 
+    });
+  }
+
+  // If URL doesn't have protocol, prepend https://
+  if (!/^https?:\/\//i.test(trimmedUrl)) {
+    trimmedUrl = 'https://' + trimmedUrl;
+  }
+
+  try {
+    // Basic validation using the trimmed URL
+    const parsed = new URL(trimmedUrl);
+    
+    // Prevent local/internal network targets (basic check)
+    const host = parsed.hostname.toLowerCase();
+    if (/^(localhost|127\.|::1|0\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/.test(host) || 
+        host.endsWith('.local') || host.endsWith('.internal')) {
+      console.log('ERROR: Blocked local/internal hostname:', host);
+      return res.status(400).render('index', { 
+        csrfToken: req.csrfToken(), 
+        error: 'Local and internal network URLs are not allowed', 
+        short: null 
+      });
+    }
+
+    // Generate unique short code
+    let code;
+    let attempts = 0;
+    do {
+      code = genCode(6);
+      attempts++;
+      
+      if (attempts > 20) {
+        console.error('Failed to generate unique code after 20 attempts');
+        return res.status(500).render('index', { 
+          csrfToken: req.csrfToken(), 
+          error: 'Unable to generate unique short code. Please try again.', 
+          short: null 
+        });
+      }
+      
+      // Check if code exists using sql.js compatible query
+      const checkResult = db.exec(`SELECT 1 FROM links WHERE code = '${code.replace(/'/g, "''")}'`);
+      if (!checkResult || checkResult.length === 0) break;
+    } while (attempts < 20);
+
+    const expireAt = parseExpiry(expiryRule);
+    const createdAt = Date.now();
+    
+    // Get client information
+    const clientIP = req.ip || req.connection.remoteAddress || req.socket.remoteAddress || 
+                    (req.connection.socket ? req.connection.socket.remoteAddress : null) || 'unknown';
+    const userAgent = req.get('User-Agent') || 'unknown';
+    
+    // Use sql.js compatible insertion with proper escaping
+    const escapedUrl = trimmedUrl.replace(/'/g, "''");
+    const escapedIP = clientIP.replace(/'/g, "''");
+    const escapedUA = userAgent.replace(/'/g, "''");
+    const insertQuery = `INSERT INTO links (code, url, created_at, expire_at, creator_ip, creator_user_agent) VALUES ('${code}', '${escapedUrl}', ${createdAt}, ${expireAt || 'NULL'}, '${escapedIP}', '${escapedUA}')`;
+    
+    db.exec(insertQuery);
+    persist();
+
+    const short = req.protocol + '://' + req.get('host') + '/' + code;
+    console.log('Created short URL:', code, 'for', parsed.hostname);
+    
+    res.render('index', { 
+      csrfToken: req.csrfToken(), 
+      error: null, 
+      short 
+    });
+    
+  } catch (err) {
+    console.error('URL shortening error:', err.message);
+    res.status(400).render('index', { 
+      csrfToken: req.csrfToken(), 
+      error: 'Invalid URL. Please enter a valid URL (e.g., https://example.com)', 
+      short: null 
+    });
+  }
+});
+
+app.get('/favicon.ico', (req, res) => res.status(204).end());
+
+// Serve robots.txt to prevent search engine crawling
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain');
+  res.send(`User-agent: *
+Disallow: /
+
+# This is a private URL shortener service
+# No crawling allowed`);
+});
+
+// Block common crawler patterns
+app.use((req, res, next) => {
+  const userAgent = req.get('User-Agent') || '';
+  const blockedAgents = [
+    'googlebot', 'bingbot', 'slurp', 'duckduckbot', 
+    'baiduspider', 'yandexbot', 'facebookexternalhit',
+    'twitterbot', 'linkedinbot', 'whatsapp', 'telegrambot'
+  ];
+  
+  if (blockedAgents.some(agent => userAgent.toLowerCase().includes(agent))) {
+    console.log('Blocked crawler:', userAgent);
+    return res.status(403).send('Crawling not allowed');
+  }
+  next();
+});
+
+// Admin routes should come before the catch-all /:code route (protected by auth)
+app.get('/admin', requireAuth, (req, res) => {
+  res.redirect('/admin/list');
+});
+
+// Stats page with beautiful UI (protected by auth)
+app.get('/debug/stats', requireAuth, (req, res) => {
+  try {
+    const countResult = db.exec('SELECT COUNT(*) as total FROM links');
+    const recentResult = db.exec('SELECT COUNT(*) as recent FROM links WHERE created_at > ' + (Date.now() - 24*60*60*1000));
+    const visitsResult = db.exec('SELECT SUM(visits) as total_visits FROM links');
+    const topLinksResult = db.exec('SELECT code, url, visits FROM links ORDER BY visits DESC LIMIT 5');
+    const recentLinksResult = db.exec('SELECT code, url, created_at FROM links ORDER BY created_at DESC LIMIT 5');
+    
+    // Get detailed visitor information
+    const visitorStatsResult = db.exec(`
+      SELECT 
+        COUNT(DISTINCT creator_ip) as unique_ips,
+        COUNT(DISTINCT last_visit_ip) as unique_visitor_ips,
+        COUNT(*) as total_links_with_ip
+      FROM links 
+      WHERE creator_ip IS NOT NULL OR last_visit_ip IS NOT NULL
+    `);
+    
+    // Get recent visitor activity
+    const recentVisitorsResult = db.exec(`
+      SELECT 
+        code, 
+        url, 
+        creator_ip, 
+        creator_user_agent, 
+        creator_country,
+        last_visit_ip,
+        last_visit_user_agent,
+        last_visit_at,
+        visits,
+        created_at
+      FROM links 
+      WHERE last_visit_at IS NOT NULL 
+      ORDER BY last_visit_at DESC 
+      LIMIT 10
+    `);
+    
+    // Get top countries
+    const topCountriesResult = db.exec(`
+      SELECT creator_country, COUNT(*) as count 
+      FROM links 
+      WHERE creator_country IS NOT NULL 
+      GROUP BY creator_country 
+      ORDER BY count DESC 
+      LIMIT 5
+    `);
+    
+    // Get browser statistics
+    const browserStatsResult = db.exec(`
+      SELECT 
+        CASE 
+          WHEN creator_user_agent LIKE '%Chrome%' THEN 'Chrome'
+          WHEN creator_user_agent LIKE '%Firefox%' THEN 'Firefox'
+          WHEN creator_user_agent LIKE '%Safari%' THEN 'Safari'
+          WHEN creator_user_agent LIKE '%Edge%' THEN 'Edge'
+          WHEN creator_user_agent LIKE '%Opera%' THEN 'Opera'
+          ELSE 'Other'
+        END as browser,
+        COUNT(*) as count
+      FROM links 
+      WHERE creator_user_agent IS NOT NULL 
+      GROUP BY browser 
+      ORDER BY count DESC
+    `);
+    
+    const total = countResult[0]?.values[0]?.[0] || 0;
+    const recent = recentResult[0]?.values[0]?.[0] || 0;
+    const totalVisits = visitsResult[0]?.values[0]?.[0] || 0;
+    
+    // Visitor statistics
+    const uniqueIPs = visitorStatsResult[0]?.values[0]?.[0] || 0;
+    const uniqueVisitorIPs = visitorStatsResult[0]?.values[0]?.[1] || 0;
+    
+    // Format top links
+    const topLinks = topLinksResult[0] ? 
+      topLinksResult[0].values.map(row => ({
+        code: row[0],
+        url: row[1].length > 50 ? row[1].substring(0, 50) + '...' : row[1],
+        visits: row[2]
+      })) : [];
+    
+    // Format recent links
+    const recentLinks = recentLinksResult[0] ? 
+      recentLinksResult[0].values.map(row => ({
+        code: row[0],
+        url: row[1].length > 50 ? row[1].substring(0, 50) + '...' : row[1],
+        created_at: new Date(row[2]).toLocaleString()
+      })) : [];
+    
+    // Format recent visitors
+    const recentVisitors = recentVisitorsResult[0] ? 
+      recentVisitorsResult[0].values.map(row => ({
+        code: row[0],
+        url: row[1].length > 60 ? row[1].substring(0, 60) + '...' : row[1],
+        creator_ip: row[2] || 'N/A',
+        creator_user_agent: row[3] || 'N/A',
+        creator_country: row[4] || 'Unknown',
+        last_visit_ip: row[5] || 'N/A',
+        last_visit_user_agent: row[6] || 'N/A',
+        last_visit_at: row[7] ? new Date(row[7]).toLocaleString() : 'Never',
+        visits: row[8] || 0,
+        created_at: new Date(row[9]).toLocaleString()
+      })) : [];
+    
+    // Format top countries
+    const topCountries = topCountriesResult[0] ? 
+      topCountriesResult[0].values.map(row => ({
+        country: row[0] || 'Unknown',
+        count: row[1]
+      })) : [];
+    
+    // Format browser statistics
+    const browserStats = browserStatsResult[0] ? 
+      browserStatsResult[0].values.map(row => ({
+        browser: row[0],
+        count: row[1]
+      })) : [];
+    
+    res.render('stats', {
+      csrfToken: req.csrfToken ? req.csrfToken() : 'no-csrf',
+      error: null,
+      stats: {
+        totalLinks: total,
+        linksLast24h: recent,
+        totalVisits: totalVisits,
+        uniqueIPs: uniqueIPs,
+        uniqueVisitorIPs: uniqueVisitorIPs,
+        topLinks: topLinks,
+        recentLinks: recentLinks,
+        recentVisitors: recentVisitors,
+        topCountries: topCountries,
+        browserStats: browserStats
+      }
+    });
+  } catch (err) {
+    res.render('stats', {
+      csrfToken: req.csrfToken ? req.csrfToken() : 'no-csrf',
+      error: err.message,
+      stats: null
+    });
+  }
+});
+
+// Admin — simple listing and cleanup (protected by auth)
+app.get('/admin/list', requireAuth, (req, res) => {
+  console.log('=== ADMIN LIST REQUEST ===');
+  
+  try {
+    // Use sql.js compatible query
+    const result = db.exec('SELECT * FROM links ORDER BY created_at DESC LIMIT 100');
+    console.log('Admin query result:', result);
+    
+    const rows = [];
+    if (result && result.length > 0 && result[0].values) {
+      const cols = result[0].columns;
+      result[0].values.forEach(v => {
+        const obj = {};
+        cols.forEach((c, i) => obj[c] = v[i]);
+        rows.push(obj);
+      });
+    }
+    
+    console.log('Formatted rows:', rows.length, 'items');
+    
+    // Format the rows for better display
+    const formattedRows = rows.map(row => ({
+      ...row,
+      created_at_formatted: new Date(row.created_at).toLocaleString(),
+      expire_at_formatted: row.expire_at ? new Date(row.expire_at).toLocaleString() : 'Never',
+      url_display: row.url.length > 60 ? row.url.substring(0, 60) + '...' : row.url
+    }));
+    
+    res.render('admin', { rows: formattedRows });
+  } catch (err) {
+    console.error('Admin list error:', err);
+    console.error('Error stack:', err.stack);
+    res.render('admin', { rows: [] });
+  }
+});
+
+// Delete link route (protected by auth)
+app.post('/admin/delete/:code', requireAuth, (req, res) => {
+  const code = req.params.code;
+  
+  try {
+    // Validate code format
+    if (!/^[A-Za-z0-9_-]+$/.test(code) || code.length > 20) {
+      return res.json({ success: false, error: 'Invalid code format' });
+    }
+    
+    // Check if link exists
+    const checkResult = db.exec(`SELECT id FROM links WHERE code = '${code.replace(/'/g, "''")}'`);
+    
+    if (!checkResult || checkResult.length === 0 || !checkResult[0].values.length) {
+      return res.json({ success: false, error: 'Link not found' });
+    }
+    
+    // Delete the link
+    db.run(`DELETE FROM links WHERE code = '${code.replace(/'/g, "''")}'`);
+    persist(); // Save changes to file
+    
+    console.log(`=== LINK DELETED ===`);
+    console.log(`Code: ${code}`);
+    console.log(`Deleted by admin at: ${new Date().toISOString()}`);
+    
+    res.json({ success: true, message: 'Link deleted successfully' });
+    
+  } catch (err) {
+    console.error('Delete error:', err);
+    res.json({ success: false, error: 'Failed to delete link' });
+  }
+});
+
+app.get('/:code', async (req, res) => {
+  const code = req.params.code;
+  
+  // Skip processing for known static files or admin routes
+  if (code.includes('.') || code === 'admin' || code === 'debug') {
+    return res.status(404).render('404');
+  }
+  
+  // Validate code format (should be alphanumeric base64url)
+  if (!/^[A-Za-z0-9_-]+$/.test(code) || code.length > 20) {
+    return res.status(404).render('404');
+  }
+  
+  try {
+    // Use sql.js compatible query with proper escaping
+    const escapedCode = code.replace(/'/g, "''");
+    const selectQuery = `SELECT * FROM links WHERE code = '${escapedCode}'`;
+    
+    const result = db.exec(selectQuery);
+    
+    if (!result || result.length === 0 || !result[0].values || result[0].values.length === 0) {
+      return res.status(404).render('404');
+    }
+    
+    // Convert result to object
+    const cols = result[0].columns;
+    const vals = result[0].values[0];
+    const row = {};
+    cols.forEach((c, i) => row[c] = vals[i]);
+    
+    // Check if expired
+    if (row.expire_at && Date.now() > row.expire_at) {
+      console.log('Removing expired link:', code);
+      // Delete expired link
+      const deleteQuery = `DELETE FROM links WHERE code = '${escapedCode}'`;
+      db.exec(deleteQuery);
+      persist();
+      return res.status(410).render('expired');
+    }
+
+    // Increment visit counter and update visit info
+    const visitIP = req.ip || req.connection.remoteAddress || req.socket.remoteAddress || 
+                   (req.connection.socket ? req.connection.socket.remoteAddress : null) || 'unknown';
+    const visitUserAgent = req.get('User-Agent') || 'unknown';
+    const visitTime = Date.now();
+    
+    const escapedVisitIP = visitIP.replace(/'/g, "''");
+    const escapedVisitUA = visitUserAgent.replace(/'/g, "''");
+    const updateQuery = `UPDATE links SET visits = visits + 1, last_visit_at = ${visitTime}, last_visit_ip = '${escapedVisitIP}', last_visit_user_agent = '${escapedVisitUA}' WHERE code = '${escapedCode}'`;
+    db.exec(updateQuery);
+    persist();
+    
+    console.log('Redirecting:', code, '->', new URL(row.url).hostname);
+    // Redirect to the original URL
+    res.redirect(301, row.url);
+    
+  } catch (err) {
+    console.error('URL retrieval error for code', code + ':', err.message);
+    res.status(500).render('404');
+  }
+});
+
+// Background cleanup: delete expired every hour
+cron.schedule('0 * * * *', () => {
+  try {
+    const now = Date.now();
+    console.log('Running cleanup job at:', new Date().toLocaleString());
+    
+    // Use sql.js compatible query
+    const deleteQuery = `DELETE FROM links WHERE expire_at IS NOT NULL AND expire_at <= ${now}`;
+    console.log('Cleanup query:', deleteQuery);
+    
+    db.exec(deleteQuery);
+    persist();
+    console.log('Cleanup completed successfully');
+  } catch (err) {
+    console.error('Cleanup error:', err);
+    console.error('Error stack:', err.stack);
+  }
+});
+
+const port = process.env.PORT || 3000;
+initDb().then(() => {
+  app.listen(port, () => console.log('ShortURL app listening on', port));
+}).catch(err => {
+  console.error('Failed to init DB', err);
+  process.exit(1);
+});

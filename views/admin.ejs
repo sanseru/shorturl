@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet, noimageindex">
+    <meta name="googlebot" content="noindex, nofollow, noarchive, nosnippet">
+    <meta name="bingbot" content="noindex, nofollow, noarchive, nosnippet">
+    <title>ShortURL - Admin Dashboard</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css" rel="stylesheet">
+  </head>
+  <body class="bg-light">
+    <!-- Navigation -->
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="/">
+          <i class="bi bi-link-45deg me-2"></i>ShortURL
+        </a>
+
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+
+        <div class="collapse navbar-collapse" id="navbarNav">
+          <div class="navbar-nav ms-auto">
+            <a class="nav-link" href="/">
+              <i class="bi bi-house me-2"></i>Home
+            </a>
+            <a class="nav-link active" href="/admin">
+              <i class="bi bi-collection me-2"></i>Links
+            </a>
+            <a class="nav-link" href="/debug/stats">
+              <i class="bi bi-bar-chart me-2"></i>Statistics
+            </a>
+            <a class="nav-link" href="/privacy">
+              <i class="bi bi-shield-check me-2"></i>Privacy
+            </a>
+            <a class="nav-link" href="/terms">
+              <i class="bi bi-file-text me-2"></i>Terms
+            </a>
+            <div class="nav-item dropdown">
+              <a class="nav-link dropdown-toggle" href="#" role="button" data-bs-toggle="dropdown">
+                <i class="bi bi-person-circle me-2"></i>Admin
+              </a>
+              <ul class="dropdown-menu">
+                <li>
+                  <form method="POST" action="/admin/logout" class="m-0">
+                    <button type="submit" class="dropdown-item">
+                      <i class="bi bi-box-arrow-right me-2"></i>Logout
+                    </button>
+                  </form>
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    </nav>
+
+    <!-- Main Content -->
+    <div class="container-fluid py-4">
+      <!-- Quick Actions Row -->
+      <div class="row mb-4">
+        <div class="col-md-4 mb-3">
+          <div class="card h-100">
+            <div class="card-body text-center">
+              <i class="bi bi-plus-circle text-success mb-3" style="font-size: 2.5rem;"></i>
+              <h5 class="card-title">Create New Link</h5>
+              <p class="card-text text-muted">Add a new short URL to your collection</p>
+              <a href="/" class="btn btn-success">
+                <i class="bi bi-plus-lg me-2"></i>Create Link
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4 mb-3">
+          <div class="card h-100">
+            <div class="card-body text-center">
+              <i class="bi bi-bar-chart text-info mb-3" style="font-size: 2.5rem;"></i>
+              <h5 class="card-title">View Statistics</h5>
+              <p class="card-text text-muted">Analyze your links performance</p>
+              <a href="/debug/stats" class="btn btn-info">
+                <i class="bi bi-graph-up me-2"></i>View Stats
+              </a>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4 mb-3">
+          <div class="card h-100">
+            <div class="card-body text-center">
+              <i class="bi bi-shield-check text-warning mb-3" style="font-size: 2.5rem;"></i>
+              <h5 class="card-title">Security Status</h5>
+              <p class="card-text text-muted">All systems running securely</p>
+              <button class="btn btn-warning" disabled>
+                <i class="bi bi-check-circle me-2"></i>Secure
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Links Management Table -->
+      <div class="row">
+        <div class="col-12">
+          <div class="card">
+            <div class="card-header">
+              <div class="d-flex justify-content-between align-items-center">
+                <div>
+                  <h5 class="mb-0">
+                    <i class="bi bi-table me-2"></i>Links Management
+                  </h5>
+                  <small class="text-muted">Manage all your shortened links</small>
+                </div>
+                <div class="d-flex gap-2 align-items-center">
+                  <input id="tableSearch" class="form-control form-control-sm" type="search" placeholder="Search code or URL" style="width: 200px;">
+                  <button class="btn btn-outline-secondary btn-sm" onclick="location.reload()">
+                    <i class="bi bi-arrow-clockwise me-1"></i>Refresh
+                  </button>
+                  <a href="/" class="btn btn-primary btn-sm">
+                    <i class="bi bi-plus-lg me-1"></i>Add New
+                  </a>
+                </div>
+              </div>
+            </div>
+
+            <div class="card-body p-0">
+              <% if (rows.length === 0) { %>
+                <div class="text-center py-5">
+                  <div class="mb-4">
+                    <i class="bi bi-inbox text-muted" style="font-size: 4rem;"></i>
+                  </div>
+                  <h4 class="text-muted mb-2">No Links Created Yet</h4>
+                  <p class="text-muted mb-4">Start by creating your first shortened link</p>
+                  <a href="/" class="btn btn-primary">
+                    <i class="bi bi-plus-circle me-2"></i>Create Your First Link
+                  </a>
+                </div>
+              <% } else { %>
+                <div class="table-responsive">
+                  <table class="table table-hover mb-0">
+                    <thead class="table-light">
+                      <tr>
+                        <th>Short Code</th>
+                        <th>Destination URL</th>
+                        <th>Created</th>
+                        <th>Expires</th>
+                        <th class="text-center">Visits</th>
+                        <th class="text-center" style="width: 140px;">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <% rows.forEach((r, index) => { %>
+                        <tr>
+                          <td>
+                            <div class="d-flex align-items-center">
+                              <code class="bg-light px-2 py-1 rounded text-primary fw-bold me-2"><%= r.code %></code>
+                              <button class="btn btn-sm btn-outline-primary copy-btn" data-code="<%= r.code %>" title="Copy full URL">
+                                <i class="bi bi-clipboard"></i>
+                              </button>
+                            </div>
+                          </td>
+                          <td>
+                            <div>
+                              <div class="fw-medium text-truncate" title="<%= r.url %>" style="max-width: 300px;">
+                                <%= r.url_display %>
+                              </div>
+                              <% if (r.url.length > 60) { %>
+                                <small class="text-muted">
+                                  <i class="bi bi-info-circle me-1"></i><%= r.url.length %> characters
+                                </small>
+                              <% } %>
+                            </div>
+                          </td>
+                          <td>
+                            <small class="text-muted">
+                              <i class="bi bi-calendar3 me-1"></i>
+                              <%= r.created_at_formatted %>
+                            </small>
+                          </td>
+                          <td>
+                            <% if (r.expire_at_formatted === 'Never') { %>
+                              <span class="badge bg-success-subtle text-success">
+                                <i class="bi bi-infinity me-1"></i>Never
+                              </span>
+                            <% } else { %>
+                              <span class="badge bg-warning-subtle text-warning">
+                                <i class="bi bi-clock me-1"></i><%= r.expire_at_formatted %>
+                              </span>
+                            <% } %>
+                          </td>
+                          <td class="text-center">
+                            <span class="badge bg-primary"><%= r.visits %></span>
+                          </td>
+                          <td>
+                            <div class="d-flex justify-content-center gap-1">
+                              <a href="/<%= r.code %>" class="btn btn-sm btn-outline-info" target="_blank" title="Open link">
+                                <i class="bi bi-box-arrow-up-right"></i>
+                              </a>
+                              <button class="btn btn-sm btn-outline-success copy-btn" data-code="<%= r.code %>" title="Copy link">
+                                <i class="bi bi-copy"></i>
+                              </button>
+                              <button class="btn btn-sm btn-outline-danger delete-btn" data-code="<%= r.code %>" title="Delete link">
+                                <i class="bi bi-trash3"></i>
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      <% }) %>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- Table Footer -->
+                <div class="card-footer bg-light">
+                  <div class="row align-items-center">
+                    <div class="col-md-6">
+                      <small class="text-muted">
+                        <i class="bi bi-info-circle me-1"></i>
+                        Showing <%= rows.length %> <%= rows.length === 1 ? 'link' : 'links' %>
+                      </small>
+                    </div>
+                    <div class="col-md-6 text-md-end">
+                      <small class="text-muted">
+                        <i class="bi bi-clock me-1"></i>
+                        Last updated: <span id="lastUpdated"></span>
+                      </small>
+                    </div>
+                  </div>
+                </div>
+              <% } %>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+      // Copy code function
+      function copyCode(code, btn) {
+        const fullUrl = window.location.origin + '/' + code;
+
+        navigator.clipboard.writeText(fullUrl).then(() => {
+          const originalContent = btn.innerHTML;
+          btn.innerHTML = '<i class="bi bi-check"></i>';
+          btn.classList.add('btn-success');
+          btn.classList.remove('btn-outline-secondary');
+
+          showToast('Link copied to clipboard!', 'success');
+
+          setTimeout(() => {
+            btn.innerHTML = originalContent;
+            btn.classList.remove('btn-success');
+            btn.classList.add('btn-outline-secondary');
+          }, 2000);
+        }).catch(err => {
+          console.error('Copy failed:', err);
+          try {
+            const textArea = document.createElement('textarea');
+            textArea.value = fullUrl;
+            textArea.style.position = 'fixed';
+            textArea.style.left = '-999999px';
+            textArea.style.top = '-999999px';
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textArea);
+            showToast('Link copied to clipboard!', 'success');
+          } catch (fallbackErr) {
+            console.error('Fallback copy failed:', fallbackErr);
+            showToast('Failed to copy link', 'error');
+          }
+        });
+      }
+
+      // Delete link function
+      function deleteLink(code, btn) {
+        if (!confirm(`Are you sure you want to delete the link "${code}"? This action cannot be undone.`)) {
+          return;
+        }
+
+        const originalContent = btn.innerHTML;
+        btn.innerHTML = '<i class="bi bi-hourglass-split"></i>';
+        btn.disabled = true;
+
+        fetch(`/admin/delete/${code}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Requested-With': 'XMLHttpRequest'
+          }
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.success) {
+            const row = btn.closest('tr');
+            row.style.transition = 'all 0.5s ease';
+            row.style.opacity = '0';
+            row.style.transform = 'translateX(-100px)';
+
+            setTimeout(() => {
+              row.remove();
+              updateStats();
+            }, 500);
+
+            showToast('Link deleted successfully!', 'success');
+          } else {
+            showToast(data.error || 'Failed to delete link', 'error');
+            btn.innerHTML = originalContent;
+            btn.disabled = false;
+          }
+        })
+        .catch(err => {
+          console.error('Delete failed:', err);
+          showToast('Failed to delete link', 'error');
+          btn.innerHTML = originalContent;
+          btn.disabled = false;
+        });
+      }
+
+      // Toast notification function
+      function showToast(message, type = 'info') {
+        const toast = document.createElement('div');
+        toast.className = `toast align-items-center text-white bg-${type === 'success' ? 'success' : type === 'error' ? 'danger' : 'primary'} border-0`;
+        toast.setAttribute('role', 'alert');
+        toast.innerHTML = `
+          <div class="d-flex">
+            <div class="toast-body">
+              <i class="bi bi-${type === 'success' ? 'check-circle' : type === 'error' ? 'exclamation-circle' : 'info-circle'} me-2"></i>
+              ${message}
+            </div>
+            <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast"></button>
+          </div>
+        `;
+
+        document.body.appendChild(toast);
+        const bsToast = new bootstrap.Toast(toast);
+        bsToast.show();
+
+        setTimeout(() => {
+          document.body.removeChild(toast);
+        }, 3000);
+      }
+
+      // Update stats after deletion
+      function updateStats() {
+        const totalElement = document.querySelector('.stat-number');
+        if (totalElement) {
+          const current = parseInt(totalElement.textContent) || 0;
+          totalElement.textContent = Math.max(0, current - 1);
+        }
+
+        recalcVisits();
+      }
+
+      // Recalculate total visits
+      function recalcVisits() {
+        const visitBadges = document.querySelectorAll('tbody tr td .badge');
+        let total = 0;
+        visitBadges.forEach(b => {
+          const n = parseInt(b.textContent.trim()) || 0;
+          total += n;
+        });
+        const totalVisitsEl = document.querySelector('#totalVisits');
+        if (totalVisitsEl) totalVisitsEl.textContent = total;
+      }
+
+      // Client-side filter
+      function filterTable(query) {
+        const q = (query || '').toLowerCase().trim();
+        document.querySelectorAll('tbody tr').forEach(row => {
+          const code = (row.querySelector('code') && row.querySelector('code').textContent) || '';
+          const urlEl = row.querySelector('.fw-medium');
+          const url = (urlEl && urlEl.textContent) || '';
+          const match = code.toLowerCase().includes(q) || url.toLowerCase().includes(q);
+          row.style.display = match ? '' : 'none';
+        });
+      }
+
+      // Update last updated time
+      function updateLastUpdatedTime() {
+        const now = new Date();
+        const timeString = now.toLocaleTimeString('en-US', {
+          hour12: false,
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit'
+        });
+        const lastUpdatedElement = document.getElementById('lastUpdated');
+        if (lastUpdatedElement) {
+          lastUpdatedElement.textContent = timeString;
+        }
+      }
+
+      // Initialize
+      document.addEventListener('DOMContentLoaded', () => {
+        updateLastUpdatedTime();
+        setInterval(updateLastUpdatedTime, 30000);
+
+        // Copy buttons
+        document.querySelectorAll('.copy-btn').forEach(btn => {
+          btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            const code = this.getAttribute('data-code');
+            copyCode(code, this);
+          });
+        });
+
+        // Delete buttons
+        document.querySelectorAll('.delete-btn').forEach(btn => {
+          btn.addEventListener('click', function(e) {
+            e.preventDefault();
+            const code = this.getAttribute('data-code');
+            deleteLink(code, this);
+          });
+        });
+
+        // Search input
+        const searchInput = document.getElementById('tableSearch');
+        if (searchInput) {
+          searchInput.addEventListener('input', function() {
+            filterTable(this.value);
+          });
+        }
+
+        // Initial recalc
+        recalcVisits();
+      });
+    </script>
+  </body>
+</html>
