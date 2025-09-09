@@ -241,6 +241,35 @@ sudo crontab -e
 # Add: 0 12 * * * /usr/bin/certbot renew --quiet
 ```
 
+### 6. **🔒 Trust Proxy Security Configuration**
+
+⚠️ **PENTING**: Aplikasi menggunakan trust proxy yang aman untuk production:
+
+- **Development**: `trust proxy = 'loopback'` (hanya localhost)
+- **Production**: `trust proxy = 1` (hanya 1 proxy/Nginx)
+
+**Konfigurasi Nginx yang Aman:**
+```nginx
+# Gunakan nginx-secure-proxy.conf untuk konfigurasi yang lebih aman
+# File ini sudah dikonfigurasi untuk:
+# - Rate limiting per endpoint
+# - Secure headers
+# - Session handling yang proper
+# - Real IP detection yang aman
+
+# Copy configuration
+sudo cp nginx-secure-proxy.conf /etc/nginx/sites-available/shorturl
+sudo ln -s /etc/nginx/sites-available/shorturl /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+**Deploy Script Otomatis:**
+```bash
+# Gunakan script deploy untuk update production dengan aman
+chmod +x deploy-secure-proxy.sh
+./deploy-secure-proxy.sh
+```
+
 ## 📊 **Monitoring & Maintenance**
 
 ### **Health Check**

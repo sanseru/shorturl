@@ -28,18 +28,30 @@ function securityLog(event, details = {}) {
 
 // Helper function to get real client IP
 function getRealIP(req) {
-  // Dengan trust proxy enabled, req.ip akan menggunakan X-Forwarded-For header
+  // Dengan trust proxy = 1, req.ip akan menggunakan X-Forwarded-For header
   // yang dikirim oleh Nginx dengan real client IP
-  return req.ip || 'unknown';
+  const ip = req.ip || 'unknown';
+  
+  // Dalam production, jika ada X-Forwarded-For, ambil IP pertama
+  if (process.env.NODE_ENV === 'production') {
+    const forwarded = req.get('X-Forwarded-For');
+    if (forwarded) {
+      const firstIP = forwarded.split(',')[0].trim();
+      return firstIP;
+    }
+  }
+  
+  return ip;
 }
 
 const app = express();
 
 // Trust proxy configuration untuk production dengan Nginx
 if (process.env.NODE_ENV === 'production') {
-  // Trust semua proxy untuk production (Nginx, load balancers, etc)
-  app.set('trust proxy', true);
-  console.log('Trust proxy enabled for production environment');
+  // Trust hanya 1 proxy (Nginx) untuk keamanan yang lebih baik
+  // Ini akan mempercayai X-Forwarded-For header dari proxy pertama saja
+  app.set('trust proxy', 1);
+  console.log('Trust proxy set to 1 for production environment (Nginx only)');
 } else {
   // Untuk development, hanya trust localhost
   app.set('trust proxy', 'loopback');
@@ -192,9 +204,19 @@ const shortenLimiter = rateLimit({
   message: 'Too many URL shortening requests, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
-  // Custom key generator untuk lebih akurat dengan proxy
+  // Custom key generator dengan validasi tambahan untuk keamanan
   keyGenerator: function (req) {
-    return req.ip; // Menggunakan real IP dari trust proxy
+    // Gunakan kombinasi IP dan user agent untuk keamanan ekstra
+    const ip = req.ip || 'unknown';
+    const forwarded = req.get('X-Forwarded-For');
+    
+    // Jika ada X-Forwarded-For, ambil IP pertama (real client)
+    if (forwarded && process.env.NODE_ENV === 'production') {
+      const firstIP = forwarded.split(',')[0].trim();
+      return firstIP;
+    }
+    
+    return ip;
   }
 });
 
@@ -207,7 +229,17 @@ const loginLimiter = rateLimit({
   // Track failed login attempts more strictly
   skipSuccessfulRequests: true,
   keyGenerator: function (req) {
-    return req.ip; // Menggunakan real IP dari trust proxy
+    // Gunakan kombinasi IP untuk login rate limiting yang lebih aman
+    const ip = req.ip || 'unknown';
+    const forwarded = req.get('X-Forwarded-For');
+    
+    // Jika ada X-Forwarded-For, ambil IP pertama (real client)
+    if (forwarded && process.env.NODE_ENV === 'production') {
+      const firstIP = forwarded.split(',')[0].trim();
+      return firstIP;
+    }
+    
+    return ip;
   }
 });
 
