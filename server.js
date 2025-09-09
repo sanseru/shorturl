@@ -12,6 +12,20 @@ const fs = require('fs');
 const crypto = require('crypto');
 const cron = require('node-cron');
 
+// Enhanced logging function
+function securityLog(event, details = {}) {
+  const timestamp = new Date().toISOString();
+  const logEntry = {
+    timestamp,
+    event,
+    ...details
+  };
+  console.log('SECURITY:', JSON.stringify(logEntry));
+  
+  // In production, you might want to write to a separate security log file
+  // or send to a monitoring service
+}
+
 const app = express();
 // Use sql.js for a portable WASM-backed sqlite; persist by writing the DB file.
 const DB_PATH = path.join(__dirname, 'data', 'shorturl.db');
@@ -129,26 +143,58 @@ app.use(cookieParser());
 
 // Session configuration
 app.use(session({
-  secret: process.env.SESSION_SECRET || 'your-fallback-secret-key',
+  secret: process.env.SESSION_SECRET || 'your-fallback-secret-key-change-this-in-production',
   resave: false,
   saveUninitialized: false,
+  name: 'sessionId', // Change default session name
   cookie: { 
-    secure: false, // Set to true if using HTTPS
+    secure: process.env.NODE_ENV === 'production', // Auto-detect HTTPS in production
     httpOnly: true,
-    maxAge: 24 * 60 * 60 * 1000 // 24 hours
+    maxAge: 2 * 60 * 60 * 1000, // Reduced to 2 hours for admin sessions
+    sameSite: 'strict' // CSRF protection
   }
 }));
 
-// Rate limit
-const limiter = rateLimit({ windowMs: 60 * 1000, max: 60 });
-app.use(limiter);
+// Rate limiting with different limits for different routes
+const generalLimiter = rateLimit({ 
+  windowMs: 60 * 1000, 
+  max: 30,
+  message: 'Too many requests, please try again later.'
+});
+
+const shortenLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5, // Only 5 URL shortening per minute
+  message: 'Too many URL shortening requests, please try again later.'
+});
+
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // Only 5 login attempts per 15 minutes
+  message: 'Too many login attempts, please try again later.'
+});
+
+app.use(generalLimiter);
 
 // CSRF protection for forms
 const csrfProtection = csurf({ cookie: true });
 
-// Authentication middleware
+// Authentication middleware with session timeout
 function requireAuth(req, res, next) {
   if (req.session && req.session.authenticated) {
+    // Check session timeout (2 hours)
+    const sessionAge = Date.now() - (req.session.loginTime || 0);
+    const maxAge = 2 * 60 * 60 * 1000; // 2 hours
+    
+    if (sessionAge > maxAge) {
+      req.session.destroy((err) => {
+        console.log('Session expired for user:', req.session?.user);
+      });
+      return res.redirect('/admin/login?redirect=' + encodeURIComponent(req.originalUrl) + '&message=session_expired');
+    }
+    
+    // Refresh session on activity
+    req.session.loginTime = Date.now();
     return next();
   } else {
     return res.redirect('/admin/login?redirect=' + encodeURIComponent(req.originalUrl));
@@ -191,7 +237,7 @@ app.get('/admin/login', csrfProtection, (req, res) => {
   });
 });
 
-app.post('/admin/login', csrfProtection, async (req, res) => {
+app.post('/admin/login', csrfProtection, loginLimiter, async (req, res) => {
   const { username, password, redirect } = req.body;
   
   console.log('=== LOGIN ATTEMPT ===');
@@ -201,12 +247,24 @@ app.post('/admin/login', csrfProtection, async (req, res) => {
   try {
     // Get credentials from environment
     const adminUsername = process.env.ADMIN_USERNAME || 'admin';
-    const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+    const adminPasswordHash = process.env.ADMIN_PASSWORD_HASH;
     
-    // Simple credential check (in production, use proper password hashing)
-    if (username === adminUsername && password === adminPassword) {
+    // If no hash is set, use default for development (should be changed in production)
+    let isValidPassword = false;
+    if (adminPasswordHash) {
+      // Use bcrypt to verify hashed password
+      isValidPassword = await bcrypt.compare(password, adminPasswordHash);
+    } else {
+      // Fallback for development - should be removed in production
+      const defaultPassword = process.env.ADMIN_PASSWORD || 'admin123';
+      isValidPassword = (password === defaultPassword);
+      console.warn('WARNING: Using plain text password. Set ADMIN_PASSWORD_HASH for production!');
+    }
+    
+    if (username === adminUsername && isValidPassword) {
       req.session.authenticated = true;
       req.session.user = username;
+      req.session.loginTime = Date.now();
       
       console.log('Login successful for user:', username);
       
@@ -253,7 +311,7 @@ app.get('/privacy', (req, res) => {
   res.render('privacy');
 });
 
-app.post('/shorten', csrfProtection, (req, res) => {
+app.post('/shorten', csrfProtection, shortenLimiter, (req, res) => {
   const { url, expiryRule } = req.body;
   
   console.log('Creating short URL for:', url?.substring(0, 100) + (url?.length > 100 ? '...' : ''));
@@ -287,14 +345,34 @@ app.post('/shorten', csrfProtection, (req, res) => {
     // Basic validation using the trimmed URL
     const parsed = new URL(trimmedUrl);
     
-    // Prevent local/internal network targets (basic check)
+    // Prevent local/internal network targets and blacklisted domains
     const host = parsed.hostname.toLowerCase();
-    if (/^(localhost|127\.|::1|0\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/.test(host) || 
-        host.endsWith('.local') || host.endsWith('.internal')) {
-      console.log('ERROR: Blocked local/internal hostname:', host);
+    
+    // Enhanced blacklist
+    const blacklistedDomains = [
+      'localhost', '127.', '::1', '0.', '10.', '192.168.',
+      'bit.ly', 'tinyurl.com', 'short.link', 't.co', // Prevent URL shortener chains
+      'malware.com', 'phishing.com' // Add known malicious domains
+    ];
+    
+    const isBlacklisted = blacklistedDomains.some(domain => 
+      host.includes(domain) || host.endsWith('.local') || host.endsWith('.internal')
+    );
+    
+    // Check for private IP ranges
+    const isPrivateIP = /^(localhost|127\.|::1|0\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.168\.)/.test(host);
+    
+    if (isBlacklisted || isPrivateIP) {
+      securityLog('BLOCKED_URL', {
+        url: trimmedUrl,
+        hostname: host,
+        ip: clientIP,
+        userAgent: userAgent
+      });
+      
       return res.status(400).render('index', { 
         csrfToken: req.csrfToken(), 
-        error: 'Local and internal network URLs are not allowed', 
+        error: 'This URL is not allowed to be shortened', 
         short: null 
       });
     }
@@ -316,8 +394,10 @@ app.post('/shorten', csrfProtection, (req, res) => {
       }
       
       // Check if code exists using sql.js compatible query
-      const checkResult = db.exec(`SELECT 1 FROM links WHERE code = '${code.replace(/'/g, "''")}'`);
-      if (!checkResult || checkResult.length === 0) break;
+      const stmt = db.prepare('SELECT 1 FROM links WHERE code = ?');
+      const checkResult = stmt.getAsObject([code]);
+      stmt.free();
+      if (!checkResult || Object.keys(checkResult).length === 0) break;
     } while (attempts < 20);
 
     const expireAt = parseExpiry(expiryRule);
@@ -328,13 +408,10 @@ app.post('/shorten', csrfProtection, (req, res) => {
                     (req.connection.socket ? req.connection.socket.remoteAddress : null) || 'unknown';
     const userAgent = req.get('User-Agent') || 'unknown';
     
-    // Use sql.js compatible insertion with proper escaping
-    const escapedUrl = trimmedUrl.replace(/'/g, "''");
-    const escapedIP = clientIP.replace(/'/g, "''");
-    const escapedUA = userAgent.replace(/'/g, "''");
-    const insertQuery = `INSERT INTO links (code, url, created_at, expire_at, creator_ip, creator_user_agent) VALUES ('${code}', '${escapedUrl}', ${createdAt}, ${expireAt || 'NULL'}, '${escapedIP}', '${escapedUA}')`;
-    
-    db.exec(insertQuery);
+    // Use prepared statements for safe insertion
+    const stmt = db.prepare('INSERT INTO links (code, url, created_at, expire_at, creator_ip, creator_user_agent) VALUES (?, ?, ?, ?, ?, ?)');
+    stmt.run([code, trimmedUrl, createdAt, expireAt, clientIP, userAgent]);
+    stmt.free();
     persist();
 
     const short = req.protocol + '://' + req.get('host') + '/' + code;
@@ -357,6 +434,51 @@ app.post('/shorten', csrfProtection, (req, res) => {
 });
 
 app.get('/favicon.ico', (req, res) => res.status(204).end());
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  try {
+    // Check database connectivity
+    const testResult = db.exec('SELECT 1 as test');
+    const isDbOk = testResult && testResult.length > 0;
+    
+    const status = {
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      database: isDbOk ? 'connected' : 'error',
+      version: require('./package.json').version
+    };
+    
+    res.json(status);
+  } catch (err) {
+    res.status(503).json({
+      status: 'unhealthy',
+      error: err.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+// API endpoint for stats (for external monitoring)
+app.get('/api/stats', requireAuth, (req, res) => {
+  try {
+    const countResult = db.exec('SELECT COUNT(*) as total FROM links');
+    const visitsResult = db.exec('SELECT SUM(visits) as total_visits FROM links');
+    const recentResult = db.exec('SELECT COUNT(*) as recent FROM links WHERE created_at > ' + (Date.now() - 24*60*60*1000));
+    
+    const stats = {
+      totalLinks: countResult[0]?.values[0]?.[0] || 0,
+      totalVisits: visitsResult[0]?.values[0]?.[0] || 0,
+      linksLast24h: recentResult[0]?.values[0]?.[0] || 0,
+      timestamp: new Date().toISOString()
+    };
+    
+    res.json(stats);
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to retrieve stats' });
+  }
+});
 
 // Serve robots.txt to prevent search engine crawling
 app.get('/robots.txt', (req, res) => {
@@ -580,26 +702,81 @@ app.post('/admin/delete/:code', requireAuth, (req, res) => {
       return res.json({ success: false, error: 'Invalid code format' });
     }
     
-    // Check if link exists
-    const checkResult = db.exec(`SELECT id FROM links WHERE code = '${code.replace(/'/g, "''")}'`);
+    // Check if link exists using prepared statement
+    const stmt = db.prepare('SELECT id FROM links WHERE code = ?');
+    const checkResult = stmt.getAsObject([code]);
+    stmt.free();
     
-    if (!checkResult || checkResult.length === 0 || !checkResult[0].values.length) {
+    if (!checkResult || Object.keys(checkResult).length === 0) {
       return res.json({ success: false, error: 'Link not found' });
     }
     
-    // Delete the link
-    db.run(`DELETE FROM links WHERE code = '${code.replace(/'/g, "''")}'`);
+    // Delete the link using prepared statement
+    const deleteStmt = db.prepare('DELETE FROM links WHERE code = ?');
+    deleteStmt.run([code]);
+    deleteStmt.free();
     persist(); // Save changes to file
     
-    console.log(`=== LINK DELETED ===`);
-    console.log(`Code: ${code}`);
-    console.log(`Deleted by admin at: ${new Date().toISOString()}`);
+    securityLog('LINK_DELETED', {
+      code: code,
+      admin: req.session.user,
+      timestamp: new Date().toISOString()
+    });
     
     res.json({ success: true, message: 'Link deleted successfully' });
     
   } catch (err) {
     console.error('Delete error:', err);
     res.json({ success: false, error: 'Failed to delete link' });
+  }
+});
+
+// Bulk operations for admin
+app.post('/admin/bulk-delete', requireAuth, (req, res) => {
+  const { action, criteria } = req.body;
+  
+  try {
+    let deletedCount = 0;
+    
+    if (action === 'expired') {
+      // Delete all expired links
+      const stmt = db.prepare('DELETE FROM links WHERE expire_at IS NOT NULL AND expire_at <= ?');
+      const result = stmt.run([Date.now()]);
+      stmt.free();
+      deletedCount = result.changes || 0;
+      
+    } else if (action === 'old') {
+      // Delete links older than specified days
+      const days = parseInt(criteria.days) || 30;
+      const cutoff = Date.now() - (days * 24 * 60 * 60 * 1000);
+      const stmt = db.prepare('DELETE FROM links WHERE created_at < ?');
+      const result = stmt.run([cutoff]);
+      stmt.free();
+      deletedCount = result.changes || 0;
+      
+    } else if (action === 'unused') {
+      // Delete links with zero visits older than 7 days
+      const cutoff = Date.now() - (7 * 24 * 60 * 60 * 1000);
+      const stmt = db.prepare('DELETE FROM links WHERE visits = 0 AND created_at < ?');
+      const result = stmt.run([cutoff]);
+      stmt.free();
+      deletedCount = result.changes || 0;
+    }
+    
+    persist();
+    
+    securityLog('BULK_DELETE', {
+      action: action,
+      criteria: criteria,
+      deletedCount: deletedCount,
+      admin: req.session.user
+    });
+    
+    res.json({ success: true, message: `Deleted ${deletedCount} links successfully` });
+    
+  } catch (err) {
+    console.error('Bulk delete error:', err);
+    res.json({ success: false, error: 'Failed to perform bulk operation' });
   }
 });
 

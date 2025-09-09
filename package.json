@@ -5,7 +5,10 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "node server.js",
+    "setup": "node setup.js",
+    "generate-password": "node generate-password.js",
+    "setup-with-password": "node setup.js --generate-password"
   },
   "keywords": [],
   "author": "",
