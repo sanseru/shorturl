@@ -39,6 +39,14 @@ if (!fs.existsSync(dataDir)) {
   console.log('✅ Data directory created.\n');
 }
 
+// Check if logs directory exists
+const logsDir = path.join(__dirname, 'logs');
+if (!fs.existsSync(logsDir)) {
+  console.log('📁 Creating logs directory...');
+  fs.mkdirSync(logsDir);
+  console.log('✅ Logs directory created.\n');
+}
+
 // Generate admin password if requested
 const args = process.argv.slice(2);
 if (args.includes('--generate-password') || args.includes('-p')) {
@@ -51,13 +59,25 @@ if (args.includes('--generate-password') || args.includes('-p')) {
 }
 
 console.log('📋 Next steps:');
-console.log('1. Edit .env file with your configuration');
+console.log('1. Edit .env file with your configuration (including PORT if needed)');
 console.log('2. Run: node generate-password.js (to generate admin password hash)');
-console.log('3. Run: npm start (to start the application)');
-console.log('4. Visit: http://localhost:3000');
+console.log('3. Choose how to start the application:');
+console.log('   • Development: npm start');
+console.log('   • Production with PM2: npm run pm2:prod');
+console.log('   • Windows: start-windows.bat');
+console.log('   • Linux: ./start-linux.sh');
+console.log('4. Check configuration: npm run config');
+console.log('5. Visit: http://localhost:[YOUR_PORT_FROM_ENV] (default: 3000)');
+console.log('\n🚀 PM2 Production Commands:');
+console.log('- Start: npm run pm2:prod');
+console.log('- Stop: npm run pm2:stop');
+console.log('- Restart: npm run pm2:restart');
+console.log('- Logs: npm run pm2:logs');
+console.log('- Monitor: npm run pm2:monit');
 console.log('\n🔒 Security recommendations:');
 console.log('- Use strong SESSION_SECRET in production');
 console.log('- Use HTTPS in production');
 console.log('- Regularly backup your data/shorturl.db file');
 console.log('- Monitor logs for security events');
+console.log('- Setup PM2 startup script for auto-restart');
 console.log('\n✨ Setup complete!');
