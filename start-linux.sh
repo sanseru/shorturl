@@ -37,13 +37,33 @@ if [ ! -d "logs" ]; then
     mkdir -p logs
 fi
 
-# Start the application
-echo "Starting ShortURL application..."
-pm2 start ecosystem.config.json --env production
-
-if [ $? -ne 0 ]; then
-    echo "ERROR: Failed to start application"
-    exit 1
+# Check if ShortURL is already running
+if pm2 list | grep -q "shorturl"; then
+    echo "ShortURL is already running!"
+    echo "Current status:"
+    pm2 list | grep shorturl
+    echo ""
+    read -p "Do you want to restart it? (y/n): " restart_choice
+    case "$restart_choice" in 
+        y|Y ) 
+            echo "Restarting ShortURL application..."
+            pm2 restart shorturl
+            ;;
+        * ) 
+            echo "Keeping existing instance running."
+            pm2 logs shorturl --lines 10
+            exit 0
+            ;;
+    esac
+else
+    # Start the application
+    echo "Starting ShortURL application..."
+    pm2 start ecosystem.config.json --env production
+    
+    if [ $? -ne 0 ]; then
+        echo "ERROR: Failed to start application"
+        exit 1
+    fi
 fi
 
 echo ""

@@ -18,7 +18,12 @@
     "pm2:logs": "pm2 logs shorturl",
     "pm2:monit": "pm2 monit",
     "logs:create": "mkdir -p logs",
-    "config": "node show-config.js"
+    "config": "node show-config.js",
+    "startup:linux": "chmod +x start-linux.sh && ./start-linux.sh",
+    "startup:windows": "start-windows.bat",
+    "cleanup:linux": "chmod +x stop-all.sh && ./stop-all.sh", 
+    "cleanup:windows": "stop-all.bat",
+    "pm2:cleanup": "pm2 delete shorturl || echo 'No process to delete'"
   },
   "keywords": [],
   "author": "",
